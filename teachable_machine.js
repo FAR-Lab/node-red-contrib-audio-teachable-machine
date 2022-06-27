@@ -2,23 +2,9 @@ module.exports = function (RED) {
   /* Initial Setup */
   const { Readable } = require('stream')
   const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args))
-  const tf = require('@tensorflow/tfjs')
-  const PImage = require('pureimage')
-
-  function isPng (buffer) {
-    if (!buffer || buffer.length < 8) {
-      return false
-    }
-
-    return buffer[0] === 0x89 &&
-      buffer[1] === 0x50 &&
-      buffer[2] === 0x4E &&
-      buffer[3] === 0x47 &&
-      buffer[4] === 0x0D &&
-      buffer[5] === 0x0A &&
-      buffer[6] === 0x1A &&
-      buffer[7] === 0x0A
-  }
+  //const tf = require('@tensorflow/tfjs')
+  const speechCommands = require('@tensorflow-models/speech-commands')
+  const tf = require('@tensorflow/tfjs-node')
 
   function teachableMachine (config) {
     /* Node-RED Node Code Creation */
@@ -54,13 +40,8 @@ module.exports = function (RED) {
         }
 
         this.model = await this.getModel(url)
-        this.labels = await this.getLabels(url)
-
-        this.input = {
-          height: this.model.inputs[0].shape[1],
-          width: this.model.inputs[0].shape[2],
-          channels: this.model.inputs[0].shape[3]
-        }
+        this.labels = this.getLabels(this.model)
+        
 
         this.ready = true
         return this.model
@@ -77,12 +58,22 @@ module.exports = function (RED) {
 
     class OnlineModelManager extends ModelManager {
       async getModel (url) {
-        return await tf.loadLayersModel(url + 'model.json')
+        const modelURL = url + 'model.json'
+        const response = await fetch(url + 'metadata.json')
+        const body = await response.text();
+        const json = JSON.parse(body);
+        const speechModel = speechCommands.create(
+          "BROWSER_FFT", // fourier transform type, not useful to change
+          undefined, // speech commands vocabulary feature, not useful for your models
+          modelURL,
+          json);
+        await (speechModel).ensureModelLoaded();
+        node.classLabels = speechModel.wordLabels();
+        return speechModel
       }
 
-      async getLabels (url) {
-        const response = await fetch(url + 'metadata.json')
-        return JSON.parse(await response.text()).labels
+      async getLabels (model) {
+        return model.wordLabels();
       }
     }
 
@@ -110,60 +101,27 @@ module.exports = function (RED) {
       }
     }
 
-    async function decodeImageBuffer (imageBuffer) {
-      node.status(nodeStatus.MODEL.DECODING)
-      const stream = new Readable({
-        read () {
-          this.push(imageBuffer)
-          this.push(null)
-        }
-      })
-      if (isPng(imageBuffer)) {
-        return await PImage.decodePNGFromStream(stream)
-      } else {
-        return await PImage.decodeJPEGFromStream(stream)
-      }
-    }
 
     /**
-     * Preprocess an image to be later passed to a model.predict().
-     * @param image image in a bitmap format
-     * @param inputShape input shape object of the model that contains height, width and channels
-     */
-    async function preprocess (image, inputShape) {
-      node.status(nodeStatus.MODEL.PREPROCESSING)
-      return tf.tidy(() => {
-        // tf.browser.fromPixels() returns a Tensor from an image element.
-        const resizedImage = tf.image.resizeNearestNeighbor(
-          tf.browser.fromPixels(image).toFloat(),
-          [inputShape.height, inputShape.width]
-        )
-
-        // Normalize the image from [0, 255] to [-1, 1].
-        const offset = tf.scalar(127.5)
-        const normalizedImage = resizedImage.sub(offset).div(offset)
-
-        // Reshape to a single-element batch so we can pass it to predict.
-        return normalizedImage.reshape([1, inputShape.height, inputShape.width, inputShape.channels])
-      })
-    }
-
-    /**
-     * Infers an image buffer to obtain classification predictions.
-     * @param imageBuffer image buffer in png or jpeg format
+     * Infers an audio buffer to obtain classification predictions.
+     * @param audioBuffer audio buffer in wav format
      * @returns outputs of the model
      */
-    async function inferImageBuffer (imageBuffer) {
-      let image
+    async function inferAudioBuffer (audioBuffer) {
+      //HERE
       try {
-        image = await decodeImageBuffer(imageBuffer)
       } catch (error) {
         node.error(error)
         return null
       }
-      const inputs = await preprocess(image, node.modelManager.input)
+      //const inputs = await preprocess(image, node.modelManager.input)
+      const testAudioData = tf.randomUniform(
+        shape = [1, 43, 232, 1],
+        minval = -1,
+        maxval = 1
+      )
       node.status(nodeStatus.MODEL.INFERENCING)
-      return await node.model.predict(inputs)
+      return await(node.model).recognize(testAudioData)
     }
 
     /**
@@ -173,7 +131,7 @@ module.exports = function (RED) {
      * @param topK The number of top predictions to show.
      */
     async function getTopKClasses (logits, topK) {
-      const values = await logits.data()
+      const values = await logits.scores
       topK = Math.min(topK, values.length)
 
       const valuesAndIndices = []
@@ -189,11 +147,11 @@ module.exports = function (RED) {
         topkValues[i] = valuesAndIndices[i].value
         topkIndices[i] = valuesAndIndices[i].index
       }
-
       const topClassesAndProbs = []
+      const promiseLabels = await node.modelManager.labels
       for (let i = 0; i < topkIndices.length; i++) {
         topClassesAndProbs.push({
-          class: node.modelManager.labels[topkIndices[i]],
+          class: promiseLabels[topkIndices[i]],
           score: topkValues[i]
         })
       }
@@ -206,8 +164,10 @@ module.exports = function (RED) {
      * @returns a list of predictions
      */
     async function postprocess (outputs) {
-      const predictions = await getTopKClasses(outputs, node.modelManager.labels.length)
-
+      const tempLabels = await node.modelManager.labels
+      const labelsLength = tempLabels.length
+      const predictions = await getTopKClasses(outputs, labelsLength)
+      
       const bestProbability = predictions[0].score.toFixed(2) * 100
       const bestPredictionText = bestProbability.toString() + '% - ' + predictions[0].class
 
@@ -238,7 +198,7 @@ module.exports = function (RED) {
       if (msg.reload) { await loadModel(config.modelUrl); return }
       if (!node.modelManager.ready) { node.status(nodeStatus.ERROR('model not ready')); return }
       if (config.passThrough) { msg.image = msg.payload }
-      const outputs = await inferImageBuffer(msg.payload)
+      const outputs = await inferAudioBuffer(msg.payload)
       if (outputs === null) { node.status(nodeStatus.MODEL.READY); return }
       msg.payload = await postprocess(outputs)
       msg.classes = node.modelManager.labels
