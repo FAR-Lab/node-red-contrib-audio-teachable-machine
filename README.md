@@ -1,4 +1,4 @@
-# node-red-contrib-teachable-machine
+# node-red-contrib-audio-teachable-machine
 
 [![Node-RED node](https://img.shields.io/badge/Node--RED-node-red?logo=node-red)](https://nodered.org)
 [![pre-commit.ci status](https://results.pre-commit.ci/badge/github/bonastreyair/node-red-contrib-teachable-machine/main.svg)](https://results.pre-commit.ci/latest/github/bonastreyair/node-red-contrib-teachable-machine/main)
@@ -16,7 +16,7 @@ A [Node-RED](https://nodered.org) node based in [tensorflow.js](https://www.tens
 <p align="center">
   <img src="https://user-images.githubusercontent.com/37800834/79343223-736d7d80-7f2e-11ea-9c85-b83fc73b0952.png" height="70">
 </p>
-
+<p>This is a fork of the original repo working towards converting the system for teachable machine's audio model generation. Current system uses dummy audio tensor for recognition.</p>
 ## Install
 
 You have two options to install the node.
