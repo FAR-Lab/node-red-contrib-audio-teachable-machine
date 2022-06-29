@@ -5,8 +5,18 @@ module.exports = function (RED) {
   //const tf = require('@tensorflow/tfjs')
   const speechCommands = require('@tensorflow-models/speech-commands')
   const tf = require('@tensorflow/tfjs-node')
+  const AudioContext = require("web-audio-engine").StreamAudioContext;
+  const context = new AudioContext();
+  const Net = require('net')
+  const port = 6000;
 
-  function teachableMachine (config) {
+  const server = new Net.Server();
+
+  function decode_utf8(s) {
+    return decodeURIComponent(escape(s));
+  }
+
+  function teachableMachine(config) {
     /* Node-RED Node Code Creation */
     RED.nodes.createNode(this, config)
     const node = this
@@ -27,12 +37,12 @@ module.exports = function (RED) {
     }
 
     class ModelManager {
-      constructor () {
+      constructor() {
         this.ready = false
         this.labels = []
       }
 
-      async load (url) {
+      async load(url) {
         if (this.ready) {
           node.status(nodeStatus.MODEL.RELOADING)
         } else {
@@ -41,23 +51,23 @@ module.exports = function (RED) {
 
         this.model = await this.getModel(url)
         this.labels = this.getLabels(this.model)
-        
+
 
         this.ready = true
         return this.model
       }
 
-      async getModel (url) {
+      async getModel(url) {
         throw new Error('getModel(url) needs to be implemented')
       }
 
-      async getLabels (url) {
+      async getLabels(url) {
         throw new Error('getLabels(url) needs to be implemented')
       }
     }
 
     class OnlineModelManager extends ModelManager {
-      async getModel (url) {
+      async getModel(url) {
         const modelURL = url + 'model.json'
         const response = await fetch(url + 'metadata.json')
         const body = await response.text();
@@ -72,7 +82,7 @@ module.exports = function (RED) {
         return speechModel
       }
 
-      async getLabels (model) {
+      async getLabels(model) {
         return model.wordLabels();
       }
     }
@@ -81,7 +91,7 @@ module.exports = function (RED) {
       online: new OnlineModelManager()
     }
 
-    function nodeInit () {
+    function nodeInit() {
       node.modelManager = modelManagerFactory[config.mode]
       if (config.modelUrl !== '') {
         loadModel(config.modelUrl)
@@ -92,7 +102,7 @@ module.exports = function (RED) {
      * Loads the Model trained from an Teachable Machine.
      * @param url where to load the model from
      */
-    async function loadModel (url) {
+    async function loadModel(url) {
       try {
         node.model = await node.modelManager.load(url)
         node.status(nodeStatus.MODEL.READY)
@@ -107,21 +117,16 @@ module.exports = function (RED) {
      * @param audioBuffer audio buffer in wav format
      * @returns outputs of the model
      */
-    async function inferAudioBuffer (audioBuffer) {
-      //HERE
-      try {
-      } catch (error) {
-        node.error(error)
-        return null
-      }
-      //const inputs = await preprocess(image, node.modelManager.input)
+    async function inferAudioBuffer(audioBuffer) {
+      const audioTensor = tf.tensor4d(
+        audioBuffer, [1].concat((node.model).modelInputShape().slice(1)));
       const testAudioData = tf.randomUniform(
         shape = [1, 43, 232, 1],
         minval = -1,
         maxval = 1
       )
       node.status(nodeStatus.MODEL.INFERENCING)
-      return await(node.model).recognize(testAudioData)
+      return await (node.model).recognize(audioTensor)
     }
 
     /**
@@ -130,7 +135,7 @@ module.exports = function (RED) {
      * @param logits Tensor representing the logits from MobileNet.
      * @param topK The number of top predictions to show.
      */
-    async function getTopKClasses (logits, topK) {
+    async function getTopKClasses(logits, topK) {
       const values = await logits.scores
       topK = Math.min(topK, values.length)
 
@@ -163,11 +168,11 @@ module.exports = function (RED) {
      * @param outputs
      * @returns a list of predictions
      */
-    async function postprocess (outputs) {
+    async function postprocess(outputs) {
       const tempLabels = await node.modelManager.labels
       const labelsLength = tempLabels.length
       const predictions = await getTopKClasses(outputs, labelsLength)
-      
+
       const bestProbability = predictions[0].score.toFixed(2) * 100
       const bestPredictionText = bestProbability.toString() + '% - ' + predictions[0].class
 
@@ -194,20 +199,38 @@ module.exports = function (RED) {
 
     nodeInit()
 
-    node.on('input', async function (msg) {
-      if (msg.reload) { await loadModel(config.modelUrl); return }
-      if (!node.modelManager.ready) { node.status(nodeStatus.ERROR('model not ready')); return }
-      if (config.passThrough) { msg.image = msg.payload }
-      const outputs = await inferAudioBuffer(msg.payload)
-      if (outputs === null) { node.status(nodeStatus.MODEL.READY); return }
-      msg.payload = await postprocess(outputs)
-      msg.classes = node.modelManager.labels
-      node.send(msg)
-    })
 
+    server.listen(port, function () {
+      node.warn(`Server listening for connection requests on socket localhost:${port}`);
+    });
+
+    let firstHalfString = null;
+    server.on('connection', function (socket) {
+      node.warn("Connected to server!");
+      socket.on('data', async function (data) {
+        const floatArray = new Float32Array(data.buffer);
+        
+        /* if (msg.reload) { await loadModel(config.modelUrl); return }
+        if (!node.modelManager.ready) { node.status(nodeStatus.ERROR('model not ready')); return }
+        if (config.passThrough) { msg.image = msg.payload } */
+        const outputs = await inferAudioBuffer(floatArray);
+        if (outputs === null) { node.status(nodeStatus.MODEL.READY); return }
+        let msg = {};
+        msg.payload = await postprocess(outputs)
+        msg.classes = node.modelManager.labels
+        node.send(msg)})
+    
+    });
     node.on('close', function () {
       node.status(nodeStatus.CLOSE)
+      server.close();
+      //python demon.close()
     })
+    server.on('close', function (socket) {
+      node.warn("Close connection to the server. This should not happen during runtime.");
+    });
+
+
   }
   RED.nodes.registerType('teachable machine', teachableMachine)
 }
