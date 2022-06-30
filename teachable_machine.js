@@ -6,7 +6,7 @@ module.exports = function (RED) {
   const speechCommands = require('@tensorflow-models/speech-commands')
   const tf = require('@tensorflow/tfjs-node')
   const { spawn } = require('child_process');
-  const child = spawn('python', ['AudioDeamon.py'], {cwd: "AudioDetectionDaemon"});
+  const child = spawn('python', ['AudioDeamon.py'], { cwd: "AudioDetectionDaemon" });
 
   function teachableMachine(config) {
     /* Node-RED Node Code Creation */
@@ -193,25 +193,23 @@ module.exports = function (RED) {
     nodeInit()
 
     child.stdout.on('data', data => {
-      node.warn("Connected to server!");
-      socket.on('data', async function (data) {
-        const floatArray = new Float32Array(data.buffer);
-        let msg = {};
-        if (floatArray.length <= 2) {
-          msg.otherValue = floatArray[0];
-          msg.dirOfArrival = floatArray[1];
-        }
-        else {
-          msg.otherValue = floatArray[0];
-          msg.dirOfArrival = floatArray[1];
-          const outputs = await inferAudioBuffer(floatArray.slice(2));
-          if (outputs === null) { node.status(nodeStatus.MODEL.READY); return }
-          msg.payload = await postprocess(outputs)
-          msg.classes = node.classLabels
 
-        }
-        node.send(msg)
-      })
+      const floatArray = new Float32Array(data.buffer);
+      let msg = {};
+      if (floatArray.length <= 2) {
+        msg.otherValue = floatArray[0];
+        msg.dirOfArrival = floatArray[1];
+      }
+      else {
+        msg.otherValue = floatArray[0];
+        msg.dirOfArrival = floatArray[1];
+        const outputs = await inferAudioBuffer(floatArray.slice(2));
+        if (outputs === null) { node.status(nodeStatus.MODEL.READY); return }
+        msg.payload = await postprocess(outputs)
+        msg.classes = node.classLabels
+
+      }
+      node.send(msg)
 
     });
 
