@@ -5,16 +5,8 @@ module.exports = function (RED) {
   //const tf = require('@tensorflow/tfjs')
   const speechCommands = require('@tensorflow-models/speech-commands')
   const tf = require('@tensorflow/tfjs-node')
-  const AudioContext = require("web-audio-engine").StreamAudioContext;
-  const context = new AudioContext();
-  const Net = require('net')
-  const port = 6000;
-
-  const server = new Net.Server();
-
-  function decode_utf8(s) {
-    return decodeURIComponent(escape(s));
-  }
+  const { spawn } = require('child_process');
+  const child = spawn('python', ['AudioDeamon.py'], {cwd: "AudioDetectionDaemon"});
 
   function teachableMachine(config) {
     /* Node-RED Node Code Creation */
@@ -77,6 +69,7 @@ module.exports = function (RED) {
           undefined, // speech commands vocabulary feature, not useful for your models
           modelURL,
           json);
+        node.warn(JSON.stringify(speechModel.params()))
         await (speechModel).ensureModelLoaded();
         node.classLabels = speechModel.wordLabels();
         return speechModel
@@ -199,36 +192,37 @@ module.exports = function (RED) {
 
     nodeInit()
 
-
-    server.listen(port, function () {
-      node.warn(`Server listening for connection requests on socket localhost:${port}`);
-    });
-
-    let firstHalfString = null;
-    server.on('connection', function (socket) {
+    child.stdout.on('data', data => {
       node.warn("Connected to server!");
       socket.on('data', async function (data) {
         const floatArray = new Float32Array(data.buffer);
-        
-        /* if (msg.reload) { await loadModel(config.modelUrl); return }
-        if (!node.modelManager.ready) { node.status(nodeStatus.ERROR('model not ready')); return }
-        if (config.passThrough) { msg.image = msg.payload } */
-        const outputs = await inferAudioBuffer(floatArray);
-        if (outputs === null) { node.status(nodeStatus.MODEL.READY); return }
         let msg = {};
-        msg.payload = await postprocess(outputs)
-        msg.classes = node.modelManager.labels
-        node.send(msg)})
-    
+        if (floatArray.length <= 2) {
+          msg.otherValue = floatArray[0];
+          msg.dirOfArrival = floatArray[1];
+        }
+        else {
+          msg.otherValue = floatArray[0];
+          msg.dirOfArrival = floatArray[1];
+          const outputs = await inferAudioBuffer(floatArray.slice(2));
+          if (outputs === null) { node.status(nodeStatus.MODEL.READY); return }
+          msg.payload = await postprocess(outputs)
+          msg.classes = node.classLabels
+
+        }
+        node.send(msg)
+      })
+
     });
+
+    child.stderr.on('data', data => {
+      console.error(`stderr: ${data}`);
+    });
+
     node.on('close', function () {
       node.status(nodeStatus.CLOSE)
-      server.close();
-      //python demon.close()
+      child.kill();
     })
-    server.on('close', function (socket) {
-      node.warn("Close connection to the server. This should not happen during runtime.");
-    });
 
 
   }
