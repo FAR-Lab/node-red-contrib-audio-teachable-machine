@@ -113,11 +113,6 @@ module.exports = function (RED) {
     async function inferAudioBuffer(audioBuffer) {
       const audioTensor = tf.tensor4d(
         audioBuffer, [1].concat((node.model).modelInputShape().slice(1)));
-      const testAudioData = tf.randomUniform(
-        shape = [1, 43, 232, 1],
-        minval = -1,
-        maxval = 1
-      )
       node.status(nodeStatus.MODEL.INFERENCING)
       return await (node.model).recognize(audioTensor)
     }
@@ -191,30 +186,31 @@ module.exports = function (RED) {
     /* Main Node Logic */
 
     nodeInit()
-
+    let processingFlag = false;
     child.stdout.on('data', data => {
-
+      
       const floatArray = new Float32Array(data.buffer);
       let msg = {};
-      if (floatArray.length <= 2) {
-        msg.otherValue = floatArray[0];
-        msg.dirOfArrival = floatArray[1];
+      if (floatArray.length <= 2 || processingFlag ) {
+        msg.dirOfArrival = floatArray[0];
+        msg.rms = floatArray[1];
       }
       else {
-        msg.otherValue = floatArray[0];
-        msg.dirOfArrival = floatArray[1];
+        msg.dirOfArrival = floatArray[0];
+        msg.rms = floatArray[1];
+        processingFlag=true
         const outputs = await inferAudioBuffer(floatArray.slice(2));
         if (outputs === null) { node.status(nodeStatus.MODEL.READY); return }
         msg.payload = await postprocess(outputs)
         msg.classes = node.classLabels
-
+        processingFlag = false;
       }
       node.send(msg)
 
     });
 
     child.stderr.on('data', data => {
-      console.error(`stderr: ${data}`);
+      node.warn(`stderr: ${data}`);
     });
 
     node.on('close', function () {
