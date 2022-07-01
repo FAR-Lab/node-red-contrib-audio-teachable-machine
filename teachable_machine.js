@@ -6,13 +6,14 @@ module.exports = function (RED) {
   const speechCommands = require('@tensorflow-models/speech-commands')
   const tf = require('@tensorflow/tfjs-node')
   const { spawn } = require('child_process');
-  const child = spawn('python', ['AudioDeamon.py'], { cwd: "AudioDetectionDaemon" });
+ 
 
   function teachableMachine(config) {
     /* Node-RED Node Code Creation */
     RED.nodes.createNode(this, config)
     const node = this
-
+    const child = spawn('python3', ['./AudioDetectionDaemon/AudioDeamon.py']);
+    node.warn("Started child process under: "+child.pid.toString())
     const nodeStatus = {
       MODEL: {
         LOADING: { fill: 'yellow', shape: 'ring', text: 'loading...' },
@@ -69,7 +70,7 @@ module.exports = function (RED) {
           undefined, // speech commands vocabulary feature, not useful for your models
           modelURL,
           json);
-        node.warn(JSON.stringify(speechModel.params()))
+        node.warn(child.pid)
         await (speechModel).ensureModelLoaded();
         node.classLabels = speechModel.wordLabels();
         return speechModel
@@ -113,6 +114,8 @@ module.exports = function (RED) {
     async function inferAudioBuffer(audioBuffer) {
       const audioTensor = tf.tensor4d(
         audioBuffer, [1].concat((node.model).modelInputShape().slice(1)));
+      
+        
       node.status(nodeStatus.MODEL.INFERENCING)
       return await (node.model).recognize(audioTensor)
     }
@@ -185,38 +188,71 @@ module.exports = function (RED) {
 
     /* Main Node Logic */
 
-    nodeInit()
-    let processingFlag = false;
-    child.stdout.on('data', data => {
+    
+    const TargetByteCount=39912
+    node.processingFlag = false;
+    const DataBuffer=Buffer.alloc(TargetByteCount);
+    let CurrentBufferFilled=0;
+    
+    child.stdout.on('data', async data =>  {
       
-      const floatArray = new Float32Array(data.buffer);
-      let msg = {};
-      if (floatArray.length <= 2 || processingFlag ) {
-        msg.dirOfArrival = floatArray[0];
-        msg.rms = floatArray[1];
+      data.copy(DataBuffer,CurrentBufferFilled)
+      CurrentBufferFilled+=data.buffer.byteLength;
+
+      if(CurrentBufferFilled>TargetByteCount){
+        CurrentBufferFilled=0;
+        node.warn("Buffer was overfull! Resetting")
+        return
+
+      }else if(CurrentBufferFilled<TargetByteCount){
+
+        //node.warn("Buffer was underfull hopeing for some more data!"+CurrentBufferFilled.toString())
+        
+        return
+      }
+      else{
+        //node.warn("Buffer was Just right"+CurrentBufferFilled.toString())
+        CurrentBufferFilled=0;
+        
+      }
+      
+      
+      
+      
+      const floatArray = new Float32Array(DataBuffer.buffer);
+      
+      
+      if (node.processingFlag) {
+        node.warn("Was processing still waiting for next time arround!")
+        return
       }
       else {
+        let msg = {};
         msg.dirOfArrival = floatArray[0];
         msg.rms = floatArray[1];
-        processingFlag=true
+        node.processingFlag=true
         const outputs = await inferAudioBuffer(floatArray.slice(2));
         if (outputs === null) { node.status(nodeStatus.MODEL.READY); return }
         msg.payload = await postprocess(outputs)
         msg.classes = node.classLabels
-        processingFlag = false;
+        node.processingFlag = false;
+        node.send(msg)
       }
-      node.send(msg)
+      
 
     });
 
     child.stderr.on('data', data => {
-      node.warn(`stderr: ${data}`);
+      node.warn('PythonError'+data.toString());
     });
 
     node.on('close', function () {
       node.status(nodeStatus.CLOSE)
+      node.warn(child.pid)
       child.kill();
     })
+    
+    nodeInit()
 
 
   }
