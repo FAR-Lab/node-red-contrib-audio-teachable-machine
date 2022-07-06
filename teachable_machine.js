@@ -12,7 +12,7 @@ module.exports = function (RED) {
     /* Node-RED Node Code Creation */
     RED.nodes.createNode(this, config)
     const node = this
-    const child = spawn('python3', ['./AudioDetectionDaemon/AudioDeamon.py']);
+    const child = spawn('python3', ['./AudioDetectionDaemon/AudioDeamon-Laptop.py']);
     node.warn("Started child process under: "+child.pid.toString())
     const nodeStatus = {
       MODEL: {
