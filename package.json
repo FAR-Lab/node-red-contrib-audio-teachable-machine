@@ -6,7 +6,7 @@
     "@tensorflow-models/speech-commands": "^0.5.4",
     "@tensorflow/tfjs": "1.4.0",
     "@tensorflow/tfjs-node": "^3.18.0",
-    "node-fetch": "3.2.6",
+    "node-fetch": "3.2.9",
     "pureimage": "0.3.8",
     "web-audio-api": "^0.2.2",
     "web-audio-engine": "^0.13.4"
