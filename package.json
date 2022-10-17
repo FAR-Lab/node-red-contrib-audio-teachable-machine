@@ -5,7 +5,7 @@
   "dependencies": {
     "@tensorflow-models/speech-commands": "^0.5.4",
     "@tensorflow/tfjs": "1.4.0",
-    "@tensorflow/tfjs-node": "^3.18.0",
+    "@tensorflow/tfjs-node": "^4.0.0",
     "node-fetch": "3.2.6",
     "pureimage": "0.3.8",
     "web-audio-api": "^0.2.2",
